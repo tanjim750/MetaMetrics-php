@@ -5,10 +5,11 @@ declare(strict_types=1);
 namespace MetaMetrics\Client;
 
 use CurlHandle;
-use JsonException;
 use MetaMetrics\Config\MetaConfig;
+use MetaMetrics\Exception\InvalidInputException;
 use MetaMetrics\Exception\NetworkException;
-use MetaMetrics\Exception\UnexpectedResponseException;
+use MetaMetrics\Support\DiagnosticSanitizer;
+use RuntimeException;
 
 final readonly class MetaClient implements MetaClientInterface
 {
@@ -18,9 +19,11 @@ final readonly class MetaClient implements MetaClientInterface
         private MetaConfig $config,
         private int $connectTimeoutSeconds = 10,
         private int $timeoutSeconds = 30,
+        private JsonResponseDecoder $decoder = new JsonResponseDecoder(),
+        private DiagnosticSanitizer $sanitizer = new DiagnosticSanitizer(),
     ) {
         if ($this->connectTimeoutSeconds < 1 || $this->timeoutSeconds < 1) {
-            throw new \InvalidArgumentException('HTTP timeouts must be positive integers.');
+            throw new InvalidInputException('HTTP timeouts must be positive integers.');
         }
     }
 
@@ -29,39 +32,56 @@ final readonly class MetaClient implements MetaClientInterface
         $handle = curl_init();
 
         if (!$handle instanceof CurlHandle) {
-            throw new NetworkException('Unable to initialize the Meta API HTTP client.');
+            throw new NetworkException(
+                'Unable to initialize the Meta API HTTP client.',
+                retryable: true,
+            );
         }
 
-        $this->configure($handle, $request);
+        $headers = [];
+        $this->configure($handle, $request, $headers);
         $rawBody = curl_exec($handle);
 
         if ($rawBody === false) {
             $errorCode = curl_errno($handle);
 
-            throw new NetworkException(sprintf('Meta API network request failed (cURL error %d).', $errorCode));
+            throw new NetworkException(
+                'Meta API network request failed.',
+                retryable: true,
+                previous: new RuntimeException(sprintf('cURL transport error %d.', $errorCode)),
+            );
         }
 
         $statusCode = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
 
         if ($statusCode === 0) {
-            throw new NetworkException('Meta API network request completed without an HTTP status.');
+            throw new NetworkException(
+                'Meta API network request completed without an HTTP status.',
+                retryable: true,
+            );
         }
 
-        return new Response($statusCode, $this->decodeBody($rawBody));
+        return new Response(
+            $statusCode,
+            $this->decoder->decode($rawBody, $statusCode),
+            $rawBody,
+            $this->sanitizer->sanitizeHeaders($headers),
+        );
     }
 
-    private function configure(CurlHandle $handle, Request $request): void
+    /** @param array<string, string> $responseHeaders */
+    private function configure(CurlHandle $handle, Request $request, array &$responseHeaders): void
     {
         $method = strtoupper($request->method());
 
         if ($method !== 'GET') {
-            throw new UnexpectedResponseException(sprintf('Unsupported Meta API HTTP method "%s".', $method));
+            throw new InvalidInputException(sprintf('Unsupported Meta API HTTP method "%s".', $method));
         }
 
         $path = $request->path();
 
         if (!str_starts_with($path, '/') || str_contains($path, '?')) {
-            throw new UnexpectedResponseException('Meta API request path is invalid.');
+            throw new InvalidInputException('Meta API request path is invalid.');
         }
 
         $query = http_build_query($request->query(), '', '&', PHP_QUERY_RFC3986);
@@ -77,16 +97,22 @@ final readonly class MetaClient implements MetaClientInterface
                 'Accept: application/json',
                 'Authorization: Bearer '.$this->config->accessToken(),
             ],
+            CURLOPT_HEADERFUNCTION => static function (CurlHandle $handle, string $line) use (&$responseHeaders): int {
+                $length = strlen($line);
+                $separator = strpos($line, ':');
+
+                if ($separator !== false) {
+                    $name = strtolower(trim(substr($line, 0, $separator)));
+                    $value = trim(substr($line, $separator + 1));
+
+                    if ($name !== '') {
+                        $responseHeaders[$name] = $value;
+                    }
+                }
+
+                return $length;
+            },
             CURLOPT_USERAGENT => 'MetaMetrics/1.0',
         ]);
-    }
-
-    private function decodeBody(string $rawBody): mixed
-    {
-        try {
-            return json_decode($rawBody, true, flags: JSON_THROW_ON_ERROR);
-        } catch (JsonException) {
-            return $rawBody;
-        }
     }
 }

@@ -33,4 +33,13 @@ final readonly class Request
     {
         return $this->query;
     }
+
+    public function withQueryParameter(string $name, mixed $value): self
+    {
+        return new self(
+            method: $this->method,
+            path: $this->path,
+            query: [...$this->query, $name => $value],
+        );
+    }
 }

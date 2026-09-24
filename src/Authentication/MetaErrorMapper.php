@@ -24,56 +24,75 @@ final class MetaErrorMapper
     private const RATE_LIMIT_CODES = [4, 17, 32, 341, 613];
 
     /** @var list<int> */
-    private const RESOURCE_CODES = [100, 803];
+    private const RESOURCE_CODES = [803];
 
-    public function map(Response $response): MetaAdsException
+    private const RESOURCE_SUBCODES = [33];
+
+    private const TRANSIENT_CODES = [1, 2];
+
+    public function __construct(private readonly MetaErrorParser $parser = new MetaErrorParser())
     {
-        $error = $this->errorPayload($response);
-        $code = $this->integerValue($error['code'] ?? null);
-        $subcode = $this->integerValue($error['error_subcode'] ?? null);
-        $type = $this->stringValue($error['type'] ?? null);
-        $traceId = $this->stringValue($error['fbtrace_id'] ?? null);
+    }
+
+    public function map(
+        Response $response,
+        ?string $resourceType = null,
+        ?string $resourceId = null,
+    ): MetaAdsException
+    {
+        $error = $this->parser->parse($response);
+        $code = $error->code();
+        $subcode = $error->subcode();
+        $type = $error->type();
+        $httpStatus = $error->httpStatus();
 
         $context = [
             'metaErrorCode' => $code,
             'metaErrorSubcode' => $subcode,
             'metaErrorType' => $type,
-            'traceId' => $traceId,
+            'traceId' => $error->traceId(),
+            'httpStatus' => $httpStatus,
+            'resourceType' => $resourceType,
+            'resourceId' => $resourceId,
         ];
 
-        if ($response->statusCode() === 429 || in_array($code, self::RATE_LIMIT_CODES, true)) {
-            return new RateLimitException('Meta API rate limit exceeded.', ...$context);
+        if ($httpStatus === 429 || in_array($code, self::RATE_LIMIT_CODES, true)) {
+            return new RateLimitException(
+                'Meta API rate limit exceeded.',
+                ...$context,
+                retryable: true,
+                retryAfterSeconds: $this->retryAfterSeconds($response),
+                safeContext: $this->usageContext($response),
+            );
         }
 
-        if (in_array($code, self::AUTHENTICATION_CODES, true) || $response->statusCode() === 401) {
+        if (in_array($code, self::AUTHENTICATION_CODES, true) || $httpStatus === 401) {
             return new AuthenticationException('Meta rejected the configured access token.', ...$context);
         }
 
-        if ($this->isPermissionCode($code) || $response->statusCode() === 403) {
-            return new PermissionException('The access token lacks permission to access the Meta Ad Account.', ...$context);
+        if ($this->isPermissionCode($code) || $httpStatus === 403) {
+            return new PermissionException(
+                'The access token does not have permission to perform this Meta API operation.',
+                ...$context,
+            );
         }
 
-        if (in_array($code, self::RESOURCE_CODES, true) || $response->statusCode() === 404) {
-            return new ResourceNotFoundException('The configured Meta Ad Account could not be accessed.', ...$context);
+        if ($this->isResourceError($code, $subcode) || $httpStatus === 404) {
+            return new ResourceNotFoundException(
+                $resourceType === null
+                    ? 'The requested Meta resource could not be found or accessed.'
+                    : sprintf('The requested Meta %s could not be found or accessed.', $resourceType),
+                ...$context,
+            );
         }
 
-        if ($type === 'OAuthException') {
-            return new AuthenticationException('Meta rejected the configured authentication.', ...$context);
-        }
-
-        return new UnexpectedResponseException('Meta returned an unexpected error response.', ...$context);
-    }
-
-    /** @return array<string, mixed> */
-    private function errorPayload(Response $response): array
-    {
-        $body = $response->body();
-
-        if (!is_array($body) || !isset($body['error']) || !is_array($body['error'])) {
-            return [];
-        }
-
-        return $body['error'];
+        return new MetaAdsException(
+            'Meta API request failed.',
+            ...$context,
+            retryable: $error->isTransient() === true
+                || $httpStatus >= 500
+                || in_array($code, self::TRANSIENT_CODES, true),
+        );
     }
 
     private function isPermissionCode(?int $code): bool
@@ -82,13 +101,38 @@ final class MetaErrorMapper
             || ($code !== null && $code >= 200 && $code <= 299);
     }
 
-    private function integerValue(mixed $value): ?int
+    private function isResourceError(?int $code, ?int $subcode): bool
     {
-        return is_int($value) ? $value : null;
+        return in_array($code, self::RESOURCE_CODES, true)
+            || in_array($subcode, self::RESOURCE_SUBCODES, true);
     }
 
-    private function stringValue(mixed $value): ?string
+    private function retryAfterSeconds(Response $response): ?int
     {
-        return is_string($value) && $value !== '' ? $value : null;
+        $retryAfter = $response->header('retry-after');
+
+        if ($retryAfter === null || preg_match('/\A[0-9]+\z/D', $retryAfter) !== 1) {
+            return null;
+        }
+
+        $seconds = filter_var($retryAfter, FILTER_VALIDATE_INT);
+
+        return is_int($seconds) && $seconds >= 0 ? $seconds : null;
+    }
+
+    /** @return array<string, string> */
+    private function usageContext(Response $response): array
+    {
+        $context = [];
+
+        foreach (['x-app-usage', 'x-ad-account-usage', 'x-business-use-case-usage'] as $header) {
+            $value = $response->header($header);
+
+            if ($value !== null) {
+                $context[str_replace('-', '_', $header)] = $value;
+            }
+        }
+
+        return $context;
     }
 }

@@ -27,7 +27,11 @@ final readonly class AuthenticationService
         ));
 
         if (!$response->isSuccessful()) {
-            throw $this->errorMapper->map($response);
+            throw $this->errorMapper->map(
+                $response,
+                'Ad Account',
+                $this->config->adAccountId(),
+            );
         }
 
         $body = $response->body();
