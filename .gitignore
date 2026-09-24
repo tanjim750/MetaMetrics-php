@@ -1,1 +1,5 @@
 docs/
+/vendor/
+/.phpunit.cache/
+/composer.lock
+/tests/credentials.local.php

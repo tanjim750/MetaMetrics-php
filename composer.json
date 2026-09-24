@@ -1,0 +1,30 @@
+{
+    "name": "metametrics/metametrics",
+    "description": "Framework-independent PHP library for the Meta Marketing API.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "ext-curl": "*",
+        "php": "^8.2"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "MetaMetrics\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "MetaMetrics\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "test:integration": "phpunit --configuration phpunit.integration.xml"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}
