@@ -4,6 +4,75 @@
 
 It provides a reusable abstraction for working with **Ad Accounts, Campaigns, Ad Sets, Ads, and performance insights** without requiring applications to directly handle Meta's raw API structure, pagination, or metric parsing.
 
+## Installation
+
+MetaMetrics requires PHP 8.2 or newer and the cURL extension. The package is not yet published on Packagist.
+
+To use the current checkout from another Composer project, register it as a path repository:
+
+```json
+{
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../meta-matrics"
+        }
+    ]
+}
+```
+
+Then install the development package:
+
+```bash
+composer require metametrics/metametrics:@dev
+```
+
+Inside this repository, install development dependencies with:
+
+```bash
+composer install
+```
+
+## Quick Start
+
+The consumer application owns credential loading. Pass the resulting strings into `MetaConfig`; the library does not read environment variables or framework configuration directly.
+
+See the complete [installation and usage guide](GETTING_STARTED.md) for service queries, Insights, historical delivery, hierarchy results, and error handling.
+
+```php
+<?php
+
+use MetaMetrics\Config\MetaConfig;
+use MetaMetrics\MetaAds;
+
+require __DIR__.'/vendor/autoload.php';
+
+$meta = new MetaAds(new MetaConfig(
+    accessToken: $accessToken,
+    adAccountId: 'act_123456789',
+    apiVersion: 'v26.0',
+));
+
+$connection = $meta->authentication()->validate();
+$account = $meta->account()->get();
+$campaigns = $meta->campaigns()->all();
+```
+
+Catch a specific exception when the application has a dedicated recovery path, or catch `MetaAdsException` for all library failures:
+
+```php
+use MetaMetrics\Exception\MetaAdsException;
+use MetaMetrics\Exception\RateLimitException;
+
+try {
+    $campaigns = $meta->campaigns()->all();
+} catch (RateLimitException $exception) {
+    $retryAfter = $exception->retryAfterSeconds();
+} catch (MetaAdsException $exception) {
+    $context = $exception->context();
+}
+```
+
 ## Features & Capabilities
 
 * Meta Marketing API authentication and configuration
@@ -20,7 +89,7 @@ It provides a reusable abstraction for working with **Ad Accounts, Campaigns, Ad
 * Raw Meta response access when needed
 * Structured API and error handling
 * Rate-limit aware architecture
-* Optional caching and logging
+* Sanitized diagnostic context for optional application logging
 * Framework-independent and Composer-friendly design
 
 ### Supported Analytics
@@ -78,6 +147,40 @@ MetaMetrics is designed for use with:
 * Laravel
 * Symfony
 * Other Composer-based PHP applications
+
+The core package does not depend on a framework, cache implementation, logger, or environment loader. Applications may log the sanitized context exposed by MetaMetrics exceptions through their own logging stack.
+
+## Raw Responses
+
+Normalized services are the default public workflow. When direct response inspection is required, use the shared low-level client:
+
+```php
+use MetaMetrics\Client\Request;
+
+$response = $meta->client()->send(new Request(
+    method: 'GET',
+    path: '/v26.0/act_123456789',
+    query: ['fields' => 'id,name,currency'],
+));
+
+if ($response->isSuccessful()) {
+    $decoded = $response->body();
+    $raw = $response->rawBody();
+} else {
+    $status = $response->statusCode();
+    $error = $response->body();
+}
+```
+
+Unlike normalized services, direct client calls return unsuccessful responses instead of mapping them to typed MetaMetrics exceptions. Never write raw responses to logs without applying the application's credential and privacy controls.
+
+## Testing
+
+```bash
+composer test
+```
+
+The unit suite uses fake Meta clients and does not require credentials. Live authentication checks use the separate integration configuration described in `docs/authentication.md`.
 
 ## Scope
 
