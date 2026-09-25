@@ -401,6 +401,50 @@ try {
 
 Exception context is sanitized for application logging. Do not log credentials, request authorization headers, or unfiltered raw responses.
 
+## Tracking URLs
+
+`TrackingUrlParser` extracts identifiers from landing-page query parameters without making a Meta API request:
+
+```php
+use MetaMetrics\Tracking\TrackingUrlParser;
+
+$identifiers = (new TrackingUrlParser())->parse(
+    'https://example.com/product?utm_id=111&utm_term=222&utm_content=333'
+    .'&utm_source=fb&utm_medium=paid',
+);
+
+echo $identifiers->campaignId(); // 111
+echo $identifiers->adSetId();    // 222
+echo $identifiers->adId();       // 333
+```
+
+The default mapping is:
+
+```text
+utm_id      -> Campaign ID
+utm_term    -> Ad Set ID
+utm_content -> Ad ID
+utm_source  -> source
+utm_medium  -> medium
+```
+
+The Ad Set and Ad meanings are this library's default tracking convention, not universal UTM semantics. Parsing does not prove that a value belongs to a real Meta entity and does not perform attribution.
+
+Override parameter names when your tracking setup uses another convention:
+
+```php
+$identifiers = (new TrackingUrlParser())->parse(
+    'https://example.com/product?campaign_id=111&adset_id=222&ad_id=333',
+    [
+        'campaignId' => 'campaign_id',
+        'adSetId' => 'adset_id',
+        'adId' => 'ad_id',
+    ],
+);
+```
+
+When `utm_id` is absent, a numeric `utm_campaign` can be used as a Campaign ID fallback. Campaign names and `fbclid` are not interpreted as Meta entity IDs.
+
 ## Raw Responses
 
 Use the low-level client only when normalized services do not provide the required response access:

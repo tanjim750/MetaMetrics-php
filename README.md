@@ -85,6 +85,7 @@ try {
 * Aggregate and daily performance breakdowns
 * Automatic pagination handling
 * Flexible filtering and metric selection
+* Configurable tracking URL identifier parsing
 * Normalized, PHP-friendly data output
 * Raw Meta response access when needed
 * Structured API and error handling
