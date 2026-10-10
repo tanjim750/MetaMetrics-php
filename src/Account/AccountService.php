@@ -29,6 +29,44 @@ final readonly class AccountService
     ) {
     }
 
+    public function getCurrency(): string
+    {
+        $accountId = $this->config->adAccountId();
+        $response = $this->client->send(new Request(
+            method: 'GET',
+            path: sprintf('/%s/%s', $this->config->apiVersion(), $accountId),
+            query: ['fields' => 'currency'],
+        ));
+
+        if (!$response->isSuccessful()) {
+            throw $this->errorMapper->map($response, 'Ad Account', $accountId);
+        }
+
+        $body = $response->body();
+
+        if (!is_array($body) || ($body['id'] ?? null) !== $accountId) {
+            throw new UnexpectedResponseException(
+                'Meta returned an unexpected Ad Account currency response.',
+                httpStatus: $response->statusCode(),
+                resourceType: 'Ad Account',
+                resourceId: $accountId,
+            );
+        }
+
+        $currency = $body['currency'] ?? null;
+
+        if (!is_string($currency) || preg_match('/\A[A-Z]{3}\z/D', $currency) !== 1) {
+            throw new UnexpectedResponseException(
+                'Meta Ad Account response requires a valid currency code.',
+                httpStatus: $response->statusCode(),
+                resourceType: 'Ad Account',
+                resourceId: $accountId,
+            );
+        }
+
+        return $currency;
+    }
+
     public function get(): AccountDTO
     {
         $response = $this->client->send(new Request(

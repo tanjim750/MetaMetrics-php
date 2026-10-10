@@ -140,6 +140,14 @@ The request retrieves:
 id,name,account_id,account_status,currency,timezone_name
 ```
 
+To fetch only the configured account's currency code:
+
+```php
+$currency = $meta->account()->getCurrency(); // e.g. USD, BDT, EUR
+```
+
+This requests `fields=currency` and returns a string. Missing or malformed currency responses throw `UnexpectedResponseException`; API failures use the existing typed exceptions.
+
 ## Campaigns
 
 Retrieve all Campaigns:

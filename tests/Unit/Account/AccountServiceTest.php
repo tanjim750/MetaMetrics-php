@@ -17,6 +17,65 @@ use PHPUnit\Framework\TestCase;
 
 final class AccountServiceTest extends TestCase
 {
+    public function testItRetrievesOnlyTheConfiguredAccountCurrency(): void
+    {
+        $client = new AccountFakeClient(new Response(200, [
+            'id' => 'act_4274485329463051',
+            'currency' => 'USD',
+        ]));
+
+        self::assertSame('USD', (new AccountService($client, $this->config()))->getCurrency());
+        self::assertSame('GET', $client->request()?->method());
+        self::assertSame('/v26.0/act_4274485329463051', $client->request()?->path());
+        self::assertSame(['fields' => 'currency'], $client->request()?->query());
+    }
+
+    #[DataProvider('malformedCurrencyProvider')]
+    public function testItRejectsMalformedCurrencyResponses(mixed $body): void
+    {
+        try {
+            (new AccountService(new AccountFakeClient(new Response(200, $body)), $this->config()))
+                ->getCurrency();
+            self::fail('Expected malformed currency response to throw.');
+        } catch (UnexpectedResponseException $exception) {
+            self::assertSame(200, $exception->httpStatus());
+            self::assertSame('act_4274485329463051', $exception->resourceId());
+        }
+    }
+
+    /** @return iterable<string, array{mixed}> */
+    public static function malformedCurrencyProvider(): iterable
+    {
+        $account = ['id' => 'act_4274485329463051'];
+        yield 'missing currency' => [$account];
+        yield 'null currency' => [[...$account, 'currency' => null]];
+        yield 'empty currency' => [[...$account, 'currency' => '']];
+        yield 'non-string currency' => [[...$account, 'currency' => 123]];
+        yield 'array currency' => [[...$account, 'currency' => ['USD']]];
+        yield 'lowercase code' => [[...$account, 'currency' => 'usd']];
+        yield 'invalid code length' => [[...$account, 'currency' => 'US']];
+        yield 'missing account ID' => [['currency' => 'USD']];
+        yield 'wrong account ID' => [['id' => 'act_999', 'currency' => 'USD']];
+        yield 'non-object response' => ['USD'];
+    }
+
+    public function testCurrencyRetrievalUsesTypedApiErrors(): void
+    {
+        $client = new AccountFakeClient(new Response(400, ['error' => [
+            'message' => 'Object does not exist',
+            'code' => 100,
+            'error_subcode' => 33,
+        ]]));
+
+        try {
+            (new AccountService($client, $this->config()))->getCurrency();
+            self::fail('Expected inaccessible account failure.');
+        } catch (ResourceNotFoundException $exception) {
+            self::assertSame('Ad Account', $exception->resourceType());
+            self::assertSame('act_4274485329463051', $exception->resourceId());
+        }
+    }
+
     public function testItRetrievesAndNormalizesTheConfiguredAccount(): void
     {
         $client = new AccountFakeClient(new Response(200, $this->account()));
