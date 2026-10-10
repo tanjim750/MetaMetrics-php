@@ -25,6 +25,7 @@ final readonly class InsightsParser
      * @param list<Metric> $foundationalMetrics
      * @return array{
      *     entityId: string,
+     *     currency: string|null,
      *     entityName: string|null,
      *     campaignId: string|null,
      *     adSetId: string|null,
@@ -49,6 +50,7 @@ final readonly class InsightsParser
         };
 
         return [
+            'currency' => $this->currency($row),
             'entityId' => $this->requiredString($row, $idField),
             'entityName' => $this->optionalString($row, $nameField),
             'campaignId' => $level === InsightsLevel::ACCOUNT
@@ -71,6 +73,22 @@ final readonly class InsightsParser
                 promotedObject: $this->promotedObject($adSetConfiguration),
             ),
         ];
+    }
+
+    /** @param array<string, mixed> $row */
+    private function currency(array $row): ?string
+    {
+        if (!array_key_exists('account_currency', $row)) {
+            return null;
+        }
+
+        $currency = $row['account_currency'];
+
+        if (!is_string($currency) || preg_match('/\A[A-Z]{3}\z/D', $currency) !== 1) {
+            throw new UnexpectedResponseException('Meta Insights requires a valid account_currency code.');
+        }
+
+        return $currency;
     }
 
     /** @param array<string, mixed> $row @param list<Metric> $metrics @return array<string, float|null> */

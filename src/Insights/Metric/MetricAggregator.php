@@ -72,6 +72,7 @@ final readonly class MetricAggregator
             level: $first->level(),
             dateRange: new DateRange($first->dateStart(), $last->dateStop()),
             metrics: $this->calculator->calculateAll($requestedMetrics, $foundational),
+            currency: $first->currency(),
         );
     }
 
@@ -82,6 +83,10 @@ final readonly class MetricAggregator
         $previous = null;
 
         foreach ($rows as $row) {
+            if ($row->currency() !== $first->currency()) {
+                throw new InvalidInputException('Metric aggregation rows must share one currency.');
+            }
+
             if ($row->entityId() !== $first->entityId() || $row->level() !== $first->level()) {
                 throw new InvalidInputException('Metric aggregation rows must represent one entity and level.');
             }

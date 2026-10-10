@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace MetaMetrics\Insights;
 
 use JsonException;
+use MetaMetrics\Account\AccountService;
 use MetaMetrics\Authentication\MetaErrorMapper;
 use MetaMetrics\Client\MetaClientInterface;
 use MetaMetrics\Client\Pagination\Paginator;
@@ -69,7 +70,8 @@ final readonly class InsightsService
             ? $this->adSetConfigurations($items)
             : [];
 
-        $results = [];
+        $parsedRows = [];
+        $currency = null;
 
         foreach ($items as $item) {
             $adSetId = $item['adset_id'] ?? null;
@@ -80,10 +82,44 @@ final readonly class InsightsService
                 $foundationalMetrics,
                 $configuration,
             );
+            if ($parsed['currency'] !== null) {
+                if ($currency !== null && $currency !== $parsed['currency']) {
+                    throw new UnexpectedResponseException('Meta Insights returned conflicting account currencies.');
+                }
+
+                $currency = $parsed['currency'];
+            }
+
+            $parsedRows[] = $parsed;
+        }
+
+        if ($parsedRows === []) {
+            return [];
+        }
+
+        $currency ??= $this->accountCurrency();
+        $results = [];
+
+        foreach ($parsedRows as $parsed) {
+            $parsed['currency'] = $currency;
             $results[] = $this->normalizer->normalize($parsed, $query->level(), $query->metrics());
         }
 
         return $results;
+    }
+
+    public function getResponse(InsightsQuery $query): InsightsResponse
+    {
+        $data = $this->get($query);
+
+        $currency = $data === [] ? $this->accountCurrency() : $data[0]->currency();
+
+        return new InsightsResponse($query->level(), $currency, $data);
+    }
+
+    private function accountCurrency(): string
+    {
+        return (new AccountService($this->client, $this->config, errorMapper: $this->errorMapper))->getCurrency();
     }
 
     /** @return array<string, scalar|null> */
@@ -94,6 +130,7 @@ final readonly class InsightsService
                 ...$this->identityFields($query->level()),
                 'date_start',
                 'date_stop',
+                'account_currency',
                 ...self::RAW_CPR_FIELDS,
                 ...$this->registry->metaFields($query->metrics()),
             ]))),

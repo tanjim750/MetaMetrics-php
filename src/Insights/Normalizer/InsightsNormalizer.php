@@ -18,6 +18,7 @@ final readonly class InsightsNormalizer
     /**
      * @param array{
      *     entityId: string,
+     *     currency: string|null,
      *     entityName: string|null,
      *     campaignId: string|null,
      *     adSetId: string|null,
@@ -41,6 +42,7 @@ final readonly class InsightsNormalizer
             metrics: $this->calculator->calculateAll($requestedMetrics, $parsed['foundational']),
             rawData: $parsed['rawData'],
             foundationalMetrics: $parsed['foundational'],
+            currency: $parsed['currency'] ?? null,
         );
     }
 }

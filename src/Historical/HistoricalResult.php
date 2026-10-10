@@ -4,12 +4,13 @@ declare(strict_types=1);
 
 namespace MetaMetrics\Historical;
 
+use JsonSerializable;
 use MetaMetrics\Exception\InvalidInputException;
 use MetaMetrics\Insights\DateRange\DateRange;
 use MetaMetrics\Insights\InsightsDTO;
 use MetaMetrics\Insights\Metric\Metric;
 
-final readonly class HistoricalResult
+final readonly class HistoricalResult implements JsonSerializable
 {
     public function __construct(
         private DateRange $requestedPeriod,
@@ -35,6 +36,16 @@ final readonly class HistoricalResult
     public function entityId(): string
     {
         return $this->insights->entityId();
+    }
+
+    public function currency(): ?string { return $this->insights->currency(); }
+
+    public function jsonSerialize(): array { return $this->toArray(); }
+
+    /** @return array<string, mixed> */
+    public function toArray(bool $includeCurrency = true): array
+    {
+        return $this->insights->toArray($includeCurrency);
     }
 
     public function entityName(): ?string

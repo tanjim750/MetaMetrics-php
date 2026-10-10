@@ -6,6 +6,7 @@ namespace MetaMetrics\Historical;
 
 use MetaMetrics\Exception\UnexpectedResponseException;
 use MetaMetrics\Insights\DateRange\DateRange;
+use MetaMetrics\Insights\InsightsDTO;
 use MetaMetrics\Insights\InsightsQuery;
 use MetaMetrics\Insights\InsightsService;
 
@@ -20,7 +21,23 @@ final readonly class HistoricalService
     /** @return list<HistoricalResult> */
     public function get(HistoricalQuery $query): array
     {
-        $insights = $this->insightsService->get(new InsightsQuery(
+        return $this->discover($query, $this->insightsService->get($this->insightsQuery($query)));
+    }
+
+    public function getResponse(HistoricalQuery $query): HistoricalResponse
+    {
+        $response = $this->insightsService->getResponse($this->insightsQuery($query));
+
+        return new HistoricalResponse(
+            $query->level(),
+            $response->currency(),
+            $this->discover($query, $response->data()),
+        );
+    }
+
+    private function insightsQuery(HistoricalQuery $query): InsightsQuery
+    {
+        return new InsightsQuery(
             level: $query->level()->toInsightsLevel(),
             dateRange: $query->dateRange(),
             metrics: $this->effectiveMetrics($query),
@@ -29,7 +46,12 @@ final readonly class HistoricalService
             filters: $query->filters(),
             limit: $query->limit(),
             includeAdSetConfiguration: false,
-        ));
+        );
+    }
+
+    /** @param list<InsightsDTO> $insights @return list<HistoricalResult> */
+    private function discover(HistoricalQuery $query, array $insights): array
+    {
         $results = [];
 
         foreach ($insights as $insight) {

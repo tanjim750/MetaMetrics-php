@@ -37,6 +37,7 @@ final class InsightsServiceTest extends TestCase
             'data' => [[
                 'campaign_id' => 'campaign-1',
                 'campaign_name' => 'September Sales',
+                'account_currency' => 'USD',
                 'date_start' => '2026-09-01',
                 'date_stop' => '2026-09-01',
                 'spend' => '100',
@@ -63,6 +64,10 @@ final class InsightsServiceTest extends TestCase
         $results = $this->service($client)->get($query);
 
         self::assertCount(1, $results);
+        self::assertSame('USD', $results[0]->currency());
+        self::assertSame('USD', $results[0]->toArray()['currency']);
+        self::assertSame($results[0]->toArray(), $results[0]->jsonSerialize());
+        self::assertCount(1, $client->requests());
         self::assertSame(3.0, $results[0]->roas());
         self::assertSame(2.0, $results[0]->ctr());
         self::assertFalse($results[0]->hasMetric(Metric::SPEND));
@@ -79,7 +84,7 @@ final class InsightsServiceTest extends TestCase
         $request = $client->requests()[0];
         self::assertSame('/v26.0/act_123456789/insights', $request->path());
         self::assertSame([
-            'fields' => 'campaign_id,campaign_name,date_start,date_stop,spend,actions,cost_per_action_type,action_values,clicks,impressions',
+            'fields' => 'campaign_id,campaign_name,date_start,date_stop,account_currency,spend,actions,cost_per_action_type,action_values,clicks,impressions',
             'level' => 'campaign',
             'time_range' => '{"since":"2026-09-01","until":"2026-09-24"}',
             'time_increment' => 1,
@@ -117,6 +122,7 @@ final class InsightsServiceTest extends TestCase
                 'campaign_id' => 'campaign-1',
                 'adset_id' => 'adset-1',
                 'adset_name' => 'Conversions',
+                'account_currency' => 'USD',
                 'date_start' => '2026-09-01',
                 'date_stop' => '2026-09-24',
                 'spend' => '250.50',
@@ -182,6 +188,125 @@ final class InsightsServiceTest extends TestCase
         self::assertCount(2, $results);
         self::assertSame([10.0, 20.0], array_map(static fn ($result): ?float => $result->spend(), $results));
         self::assertSame('next-page', $client->requests()[1]->query()['after']);
+        self::assertSame(['USD', 'USD'], array_map(static fn ($row) => $row->currency(), $results));
+    }
+
+    public function testResponseSerializesCurrencyOnceForDailyRows(): void
+    {
+        $client = InsightsFakeMetaClient::withResponses(new Response(200, ['data' => [
+            $this->accountRow('2026-09-01', '10'),
+            $this->accountRow('2026-09-02', '20'),
+        ]]));
+        $response = $this->service($client)->getResponse($this->accountQuery(daily: true));
+        $json = json_decode(json_encode($response, JSON_THROW_ON_ERROR), true, flags: JSON_THROW_ON_ERROR);
+
+        self::assertSame('USD', $response->currency());
+        self::assertSame('account', $json['level']);
+        self::assertSame('USD', $json['currency']);
+        self::assertSame([10.0, 20.0], array_column($response->toArray()['data'], 'spend'));
+        self::assertArrayNotHasKey('currency', $json['data'][0]);
+        self::assertArrayNotHasKey('currency', $json['data'][1]);
+        self::assertCount(1, $client->requests());
+    }
+
+    public function testMissingCurrencyUsesOneAccountRequestForTheWholeResponse(): void
+    {
+        $rows = [$this->accountRow('2026-09-01', '10'), $this->accountRow('2026-09-02', '20')];
+        foreach ($rows as &$row) {
+            unset($row['account_currency']);
+        }
+        unset($row);
+        $client = InsightsFakeMetaClient::withResponses(
+            new Response(200, ['data' => $rows]),
+            new Response(200, ['id' => 'act_123456789', 'currency' => 'BDT']),
+        );
+
+        $response = $this->service($client)->getResponse($this->accountQuery(daily: true));
+
+        self::assertSame('BDT', $response->currency());
+        self::assertSame(['BDT', 'BDT'], array_map(static fn ($row) => $row->currency(), $response->data()));
+        self::assertCount(2, $client->requests());
+        self::assertSame('/v26.0/act_123456789', $client->requests()[1]->path());
+        self::assertSame(['fields' => 'currency'], $client->requests()[1]->query());
+    }
+
+    public function testMissingCurrencyCanUseAnotherRowWithoutAnAccountRequest(): void
+    {
+        $row = $this->accountRow('2026-09-01', '10');
+        unset($row['account_currency']);
+        $client = InsightsFakeMetaClient::withResponses(new Response(200, ['data' => [
+            $row, $this->accountRow('2026-09-02', '20'),
+        ]]));
+
+        $response = $this->service($client)->getResponse($this->accountQuery(daily: true));
+
+        self::assertSame('USD', $response->data()[0]->currency());
+        self::assertCount(1, $client->requests());
+    }
+
+    public function testEmptyResponseStillHasConfiguredCurrency(): void
+    {
+        $client = InsightsFakeMetaClient::withResponses(
+            new Response(200, ['data' => []]),
+            new Response(200, ['id' => 'act_123456789', 'currency' => 'EUR']),
+        );
+
+        self::assertSame([
+            'level' => 'account', 'currency' => 'EUR', 'data' => [],
+        ], $this->service($client)->getResponse($this->accountQuery())->toArray());
+        self::assertCount(2, $client->requests());
+    }
+
+    #[DataProvider('malformedCurrencyProvider')]
+    public function testMalformedCurrencyIsNotHiddenByFallback(mixed $currency): void
+    {
+        $row = $this->accountRow('2026-09-01', '10');
+        $row['account_currency'] = $currency;
+        $client = InsightsFakeMetaClient::withResponses(new Response(200, ['data' => [$row]]));
+
+        $this->expectException(UnexpectedResponseException::class);
+        $this->expectExceptionMessage('account_currency');
+        $this->service($client)->getResponse($this->accountQuery());
+    }
+
+    public static function malformedCurrencyProvider(): iterable
+    {
+        yield 'null' => [null];
+        yield 'empty' => [''];
+        yield 'lowercase' => ['usd'];
+        yield 'number' => [123];
+        yield 'array' => [['USD']];
+        yield 'long' => ['USDX'];
+    }
+
+    public function testConflictingCurrenciesAcrossPagesAreRejected(): void
+    {
+        $row = $this->accountRow('2026-09-02', '20');
+        $row['account_currency'] = 'EUR';
+        $client = InsightsFakeMetaClient::withResponses(
+            new Response(200, [
+                'data' => [$this->accountRow('2026-09-01', '10')],
+                'paging' => ['cursors' => ['after' => 'page-2'], 'next' => 'https://graph.facebook.com/next'],
+            ]),
+            new Response(200, ['data' => [$row]]),
+        );
+
+        $this->expectException(UnexpectedResponseException::class);
+        $this->expectExceptionMessage('conflicting');
+        $this->service($client)->getResponse($this->accountQuery(daily: true));
+    }
+
+    public function testCurrencyFallbackPreservesMappedApiErrors(): void
+    {
+        $row = $this->accountRow('2026-09-01', '10');
+        unset($row['account_currency']);
+        $client = InsightsFakeMetaClient::withResponses(
+            new Response(200, ['data' => [$row]]),
+            new Response(403, ['error' => ['code' => 200, 'message' => 'Permission denied']]),
+        );
+
+        $this->expectException(PermissionException::class);
+        $this->service($client)->get($this->accountQuery());
     }
 
     #[DataProvider('apiErrorProvider')]
@@ -296,6 +421,7 @@ final class InsightsServiceTest extends TestCase
         return [
             'account_id' => '123456789',
             'account_name' => 'Test Account',
+            'account_currency' => 'USD',
             'date_start' => $date,
             'date_stop' => $date,
             'spend' => $spend,

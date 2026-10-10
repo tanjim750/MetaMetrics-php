@@ -6,6 +6,7 @@ return [
     [
         'campaign_id' => 'campaign-before-range',
         'campaign_name' => 'Paused after delivery',
+        'account_currency' => 'USD',
         'date_start' => '2026-09-01',
         'date_stop' => '2026-09-24',
         'spend' => '500.00',
@@ -17,6 +18,7 @@ return [
     [
         'campaign_id' => 'campaign-created-in-range',
         'campaign_name' => 'Created during range',
+        'account_currency' => 'USD',
         'date_start' => '2026-09-01',
         'date_stop' => '2026-09-24',
         'spend' => '0',
@@ -28,6 +30,7 @@ return [
     [
         'campaign_id' => 'campaign-without-delivery',
         'campaign_name' => 'Active without delivery',
+        'account_currency' => 'USD',
         'date_start' => '2026-09-01',
         'date_stop' => '2026-09-24',
         'spend' => '0',

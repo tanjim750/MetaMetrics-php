@@ -4,10 +4,11 @@ declare(strict_types=1);
 
 namespace MetaMetrics\Insights;
 
+use JsonSerializable;
 use MetaMetrics\Insights\DateRange\DateRange;
 use MetaMetrics\Insights\Metric\Metric;
 
-final readonly class InsightsDTO
+final readonly class InsightsDTO implements JsonSerializable
 {
     /**
      * @param array<string, float|null> $metrics
@@ -24,12 +25,34 @@ final readonly class InsightsDTO
         private array $metrics,
         private InsightsRawData $rawData,
         private array $foundationalMetrics = [],
+        private ?string $currency = null,
     ) {
     }
 
     public function entityId(): string
     {
         return $this->entityId;
+    }
+
+    public function currency(): ?string { return $this->currency; }
+
+    public function jsonSerialize(): array { return $this->toArray(); }
+
+    /** @return array<string, mixed> */
+    public function toArray(bool $includeCurrency = true): array
+    {
+        return [
+            'entity_id' => $this->entityId,
+            'entity_name' => $this->entityName,
+            'level' => $this->level->value,
+            ...($includeCurrency ? ['currency' => $this->currency] : []),
+            'campaign_id' => $this->campaignId,
+            'adset_id' => $this->adSetId,
+            'ad_id' => $this->adId,
+            'date_start' => $this->dateStart(),
+            'date_stop' => $this->dateStop(),
+            ...$this->metrics,
+        ];
     }
 
     public function entityName(): ?string

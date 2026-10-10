@@ -24,6 +24,8 @@ final class MetricAggregatorTest extends TestCase
         ], $metrics);
 
         self::assertNotNull($result);
+        self::assertSame('USD', $result->currency());
+        self::assertSame('USD', $result->toArray()['currency']);
         self::assertSame(2.0, $result->metric(Metric::CTR));
         self::assertSame(5.0, $result->metric(Metric::CPC));
         self::assertSame(100.0, $result->metric(Metric::CPM));
@@ -70,6 +72,38 @@ final class MetricAggregatorTest extends TestCase
         ], [Metric::SPEND]);
     }
 
+    public function testMixedCurrenciesCannotBeAggregated(): void
+    {
+        $this->expectException(InvalidInputException::class);
+        $this->expectExceptionMessage('currency');
+
+        (new MetricAggregator())->aggregate([
+            $this->row('2026-09-01', '20', '10', '100', '60', '40'),
+            $this->row('2026-09-02', '80', '10', '900', '500', '260', currency: 'BDT'),
+        ], [Metric::CPC]);
+    }
+
+    public function testKnownAndUnknownCurrenciesCannotBeAggregated(): void
+    {
+        $this->expectException(InvalidInputException::class);
+        $this->expectExceptionMessage('currency');
+
+        (new MetricAggregator())->aggregate([
+            $this->row('2026-09-01', '20', '10', '100', '60', '40'),
+            $this->row('2026-09-02', '80', '10', '900', '500', '260', currency: null),
+        ], [Metric::CPC]);
+    }
+
+    public function testLegacyRowsWithoutCurrencyRemainSupported(): void
+    {
+        $result = (new MetricAggregator())->aggregate([
+            $this->row('2026-09-01', '20', '10', '100', '60', '40', currency: null),
+        ], [Metric::CPC]);
+
+        self::assertNull($result->currency());
+        self::assertSame(2.0, $result->metric(Metric::CPC));
+    }
+
     private function row(
         string $date,
         string $spend,
@@ -78,12 +112,14 @@ final class MetricAggregatorTest extends TestCase
         string $reach,
         string $purchaseValue,
         string $campaignId = 'campaign-1',
+        ?string $currency = 'USD',
     ): \MetaMetrics\Insights\InsightsDTO {
         $metrics = [Metric::CTR, Metric::CPC, Metric::CPM, Metric::ROAS, Metric::REACH];
         $foundational = (new MetricRegistry())->foundationalMetrics($metrics);
         $parsed = (new InsightsParser())->parse([
             'campaign_id' => $campaignId,
             'campaign_name' => 'Campaign',
+            ...($currency !== null ? ['account_currency' => $currency] : []),
             'date_start' => $date,
             'date_stop' => $date,
             'spend' => $spend,

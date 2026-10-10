@@ -23,7 +23,7 @@ final readonly class HierarchyService
         array $metrics = [],
         bool $daily = false,
     ): HierarchyResult {
-        $campaigns = $this->historicalService->get(new HistoricalQuery(
+        $campaignResponse = $this->historicalService->getResponse(new HistoricalQuery(
             HistoricalLevel::CAMPAIGN,
             $dateRange,
             metrics: $metrics,
@@ -42,7 +42,7 @@ final readonly class HierarchyService
             daily: $daily,
         ));
 
-        return $this->build($dateRange, $campaigns, $adSets, $ads);
+        return $this->build($dateRange, $campaignResponse->data(), $adSets, $ads, $campaignResponse->currency());
     }
 
     /**
@@ -55,6 +55,7 @@ final readonly class HierarchyService
         array $campaigns,
         array $adSets,
         array $ads,
+        string $currency,
     ): HierarchyResult {
         $adsByAdSet = [];
 
@@ -103,7 +104,7 @@ final readonly class HierarchyService
             }
         }
 
-        return new HierarchyResult($dateRange, $campaignNodes, $unattachedAdSets, $unattachedAds);
+        return new HierarchyResult($dateRange, $campaignNodes, $unattachedAdSets, $unattachedAds, $currency);
     }
 
     private function resultKey(HistoricalResult $result): string

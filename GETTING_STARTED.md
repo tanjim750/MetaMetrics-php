@@ -260,6 +260,24 @@ foreach ($rows as $row) {
 }
 ```
 
+### Currency-aware responses
+
+Use `getResponse()` when you need a response object with account currency alongside the data:
+
+```php
+$response = $meta->insights()->getResponse($query);
+echo $response->currency();
+$rows = $response->data();
+echo json_encode($response, JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR);
+```
+
+The serialized shape is `{ "level": "campaign", "currency": "USD", "data": [...] }`.
+Currency appears once at the response level, including daily/time-series results, and describes all monetary metrics (spend, purchase value, CPP, CPC, CPM).
+
+Insights requests always include Meta's `account_currency`. When it is absent from every row, the account currency helper is called once for the entire result, not per row or entity. An empty `getResponse()` also resolves the configured account currency. Malformed codes or conflicting currencies throw `UnexpectedResponseException`. No currency conversion is performed.
+
+Existing `get()` methods still return lists. Their rows expose `currency()` and `toArray()` for individual results. Empty list queries remain empty without an additional currency request. Constructors retain optional currency for compatibility with manually created legacy DTOs; those DTOs can report `null` until supplied with a currency.
+
 ### Daily results
 
 Set `daily: true` to request one-day reporting rows:
@@ -342,6 +360,21 @@ $results = $meta->historical()->get(new HistoricalQuery(
 ));
 ```
 
+Historical responses support the same top-level currency format:
+
+```php
+$response = $meta->historical()->getResponse(new HistoricalQuery(
+    level: HistoricalLevel::CAMPAIGN,
+    dateRange: new DateRange('2026-09-01', '2026-09-24'),
+    metrics: [Metric::SPEND],
+    daily: true,
+));
+echo $response->currency();
+echo json_encode($response, JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR);
+```
+
+Currency is preserved even when delivery discovery removes every row. Each legacy `HistoricalResult` also exposes `currency()` through its Insights data.
+
 ## Historical Hierarchy
 
 Build a Campaign to Ad Set to Ad hierarchy for a date range:
@@ -367,6 +400,8 @@ foreach ($hierarchy->campaigns() as $campaignNode) {
 
 Use `unattachedAdSets()` and `unattachedAds()` to inspect delivered entities whose parent row was not returned for the same reporting period.
 
+`$hierarchy->currency()` describes all monetary values in the hierarchy. `toArray()` and JSON serialization include currency once at the root, not in child rows. Conflicting currencies across hierarchy levels are rejected.
+
 ## Aggregate Daily Rows Locally
 
 `MetricAggregator` sums foundational metrics and recalculates derived metrics such as CTR, CPC, CPM, and ROAS.
@@ -384,7 +419,7 @@ if ($aggregate !== null) {
 }
 ```
 
-All rows passed to one aggregation must represent the same entity and level, and their reporting periods must not overlap. Reach is not summed across multiple rows because that would double-count people.
+All rows passed to one aggregation must represent the same entity, level, and currency, and their reporting periods must not overlap. The aggregate exposes `currency()` and includes it in `toArray()` and JSON serialization. Known and unknown currencies cannot be combined. Reach is not summed across multiple rows because that would double-count people.
 
 ## Error Handling
 

@@ -53,6 +53,7 @@ final class HistoricalServiceTest extends TestCase
             array_map(static fn ($result): string => $result->entityId(), $results),
         );
         self::assertSame(2.0, $results[0]->insights()->roas());
+        self::assertSame('USD', $results[0]->currency());
         self::assertSame('2026-09-01', $results[0]->requestedSince());
         self::assertSame('2026-09-24', $results[0]->requestedUntil());
         self::assertSame(['impressions' => 10000.0, 'spend' => 500.0, 'reach' => 8000.0], $results[0]->deliveryEvidence()->indicators());
@@ -61,7 +62,7 @@ final class HistoricalServiceTest extends TestCase
         self::assertSame('/v26.0/act_123/insights', $client->requests()[0]->path());
         self::assertSame('campaign', $client->requests()[0]->query()['level']);
         self::assertSame(
-            'campaign_id,campaign_name,date_start,date_stop,spend,actions,cost_per_action_type,impressions,reach,action_values',
+            'campaign_id,campaign_name,date_start,date_stop,account_currency,spend,actions,cost_per_action_type,impressions,reach,action_values',
             $client->requests()[0]->query()['fields'],
         );
         self::assertArrayNotHasKey('time_increment', $client->requests()[0]->query());
@@ -103,6 +104,7 @@ final class HistoricalServiceTest extends TestCase
                 'campaign_id' => 'campaign-1',
                 'adset_id' => 'adset-1',
                 'adset_name' => 'Ad Set',
+                'account_currency' => 'USD',
                 'date_start' => '2026-09-01',
                 'date_stop' => '2026-09-24',
                 'spend' => '5',
@@ -127,6 +129,7 @@ final class HistoricalServiceTest extends TestCase
             'adset_id' => 'adset-1',
             'ad_id' => 'ad-1',
             'ad_name' => 'Ad',
+            'account_currency' => 'USD',
             'date_start' => '2026-09-01',
             'date_stop' => '2026-09-24',
             'spend' => '2',
@@ -247,6 +250,7 @@ final class HistoricalServiceTest extends TestCase
         $client = HistoricalFakeMetaClient::withResponses(new Response(200, ['data' => [[
             'campaign_id' => 'campaign-1',
             'campaign_name' => 'Campaign',
+            'account_currency' => 'USD',
             'date_start' => '2026-09-01',
             'date_stop' => '2026-09-24',
         ]]]));
@@ -255,6 +259,52 @@ final class HistoricalServiceTest extends TestCase
         $this->expectExceptionMessage('insufficient delivery evidence');
 
         $this->service($client)->campaigns($this->range());
+    }
+
+    public function testDailyResponseKeepsCurrencyOutsideItsRows(): void
+    {
+        $client = HistoricalFakeMetaClient::withResponses(new Response(200, ['data' => [
+            $this->campaignRow('2026-09-01', '10', '100'),
+            $this->campaignRow('2026-09-02', '20', '200'),
+        ]]));
+        $response = $this->service($client)->getResponse(new HistoricalQuery(
+            HistoricalLevel::CAMPAIGN, $this->range(), daily: true,
+        ));
+        $json = json_decode(json_encode($response, JSON_THROW_ON_ERROR), true, flags: JSON_THROW_ON_ERROR);
+
+        self::assertSame('USD', $response->currency());
+        self::assertSame('campaign', $json['level']);
+        self::assertSame('USD', $json['currency']);
+        self::assertCount(2, $json['data']);
+        self::assertArrayNotHasKey('currency', $json['data'][0]);
+        self::assertArrayNotHasKey('currency', $json['data'][1]);
+        self::assertSame(10.0, $response->toArray()['data'][0]['spend']);
+        self::assertCount(1, $client->requests());
+    }
+
+    public function testFilteredOutDeliveryStillPreservesInsightsCurrency(): void
+    {
+        $row = $this->campaignRow('2026-09-01', '0', '0');
+        $row['account_currency'] = 'BDT';
+        $client = HistoricalFakeMetaClient::withResponses(new Response(200, ['data' => [$row]]));
+        $response = $this->service($client)->getResponse(new HistoricalQuery(HistoricalLevel::CAMPAIGN, $this->range()));
+
+        self::assertSame('BDT', $response->currency());
+        self::assertSame([], $response->data());
+        self::assertCount(1, $client->requests());
+    }
+
+    public function testEmptyResponseResolvesCurrencyOnce(): void
+    {
+        $client = HistoricalFakeMetaClient::withResponses(
+            new Response(200, ['data' => []]),
+            new Response(200, ['id' => 'act_123', 'currency' => 'EUR']),
+        );
+
+        $response = $this->service($client)->getResponse(new HistoricalQuery(HistoricalLevel::CAMPAIGN, $this->range()));
+
+        self::assertSame(['level' => 'campaign', 'currency' => 'EUR', 'data' => []], $response->toArray());
+        self::assertCount(2, $client->requests());
     }
 
     private function service(HistoricalFakeMetaClient $client): HistoricalService
@@ -279,6 +329,7 @@ final class HistoricalServiceTest extends TestCase
         return [
             'campaign_id' => $id,
             'campaign_name' => 'Campaign',
+            'account_currency' => 'USD',
             'date_start' => $date,
             'date_stop' => $date,
             'spend' => $spend,

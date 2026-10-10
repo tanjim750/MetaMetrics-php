@@ -31,6 +31,13 @@ final class HierarchyServiceTest extends TestCase
         $result = $service->historical(new DateRange('2026-09-01', '2026-09-24'));
 
         self::assertCount(1, $result->campaigns());
+        self::assertSame('USD', $result->currency());
+        $serialized = $result->toArray();
+        self::assertSame('USD', $serialized['currency']);
+        self::assertArrayNotHasKey('currency', $serialized['campaigns'][0]);
+        self::assertArrayNotHasKey('currency', $serialized['campaigns'][0]['children'][0]);
+        self::assertArrayNotHasKey('currency', $serialized['campaigns'][0]['children'][0]['children'][0]);
+        self::assertSame($serialized, $result->jsonSerialize());
         self::assertSame('campaign-1', $result->campaigns()[0]->entityId());
         self::assertCount(1, $result->campaigns()[0]->children());
         self::assertSame('adset-1', $result->campaigns()[0]->children()[0]->entityId());
@@ -51,6 +58,46 @@ final class HierarchyServiceTest extends TestCase
             static fn (Request $request): mixed => $request->query()['level'],
             $client->requests(),
         ));
+    }
+
+    public function testMixedCurrenciesAcrossLevelsAreRejected(): void
+    {
+        $fixture = require dirname(__DIR__, 2).'/Fixtures/MetaResponses/historical_hierarchy.php';
+        foreach ($fixture['ads'] as &$row) {
+            $row['account_currency'] = 'EUR';
+        }
+        unset($row);
+        $client = new HierarchyFakeMetaClient(
+            new Response(200, ['data' => $fixture['campaigns']]),
+            new Response(200, ['data' => $fixture['adsets']]),
+            new Response(200, ['data' => $fixture['ads']]),
+        );
+        $service = new HierarchyService(new HistoricalService(new InsightsService(
+            $client, new MetaConfig('hierarchy-secret', 'act_123', 'v26.0'),
+        )));
+
+        $this->expectException(\MetaMetrics\Exception\InvalidInputException::class);
+        $this->expectExceptionMessage('currency');
+        $service->historical(new DateRange('2026-09-01', '2026-09-24'));
+    }
+
+    public function testEmptyHierarchyResolvesCurrencyOnlyOnce(): void
+    {
+        $client = new HierarchyFakeMetaClient(
+            new Response(200, ['data' => []]),
+            new Response(200, ['id' => 'act_123', 'currency' => 'BDT']),
+            new Response(200, ['data' => []]),
+            new Response(200, ['data' => []]),
+        );
+        $service = new HierarchyService(new HistoricalService(new InsightsService(
+            $client, new MetaConfig('hierarchy-secret', 'act_123', 'v26.0'),
+        )));
+
+        $response = $service->historical(new DateRange('2026-09-01', '2026-09-24'));
+
+        self::assertSame('BDT', $response->currency());
+        self::assertSame([], $response->campaigns());
+        self::assertCount(4, $client->requests());
     }
 }
 
